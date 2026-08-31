@@ -1,0 +1,254 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="shortcut icon" type="image/x-icon" href="favicon.ico"/>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <title>mbDirect Iframe Testing - UAT</title>
+    <style>
+        #popupOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        #popupBox {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        label {
+            display: block;
+            margin-top: 10px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 6px;
+        }
+
+        .radio-group,
+        .checkbox-group {
+            margin-top: 10px;
+        }
+
+        #submitBtn {
+            margin-top: 15px;
+            padding: 8px 16px;
+        }
+
+        #errorMessage {
+            color: #b00020;
+            margin-top: 12px;
+        }
+
+        #contentIframe {
+            width: 100%;
+            height: 1000px;
+            margin-top: 20px;
+            border: 1px solid #ccc;
+        }
+        .help-text {
+            font-size: 0.8rem;
+            color: #666666;
+            margin-top: 5px; /* Add some spacing */
+        }
+
+    </style>
+</head>
+
+<div style="text-align: center;">
+    <h2>Merchant Page</h2>
+</div>
+    <!-- Modal Popup -->
+    <div id="popupOverlay">
+        <div id="popupBox">
+            <h2>Iframe Configuration</h2>
+            <form id="popupForm">
+                <div class="radio-group">
+                    <b>Merchant:</b>
+                    <label>
+                        <input type="radio" name="merchantId" value="887000003353" checked />
+                        CWS
+                    </label>
+                    <label>
+                        <input type="radio" name="merchantId" value="886000003353" />
+                        MessagePay
+                    </label>
+                </div>
+
+                <label>
+                    <b>Show Logo:</b>
+                    <input type="checkbox" id="showLogo" />
+                </label>
+                <label>
+                    <b>Callback URL (Optional):</b>
+                    <input type="text" id="callbackUrl" />
+                    <div class="help-text">Example: shipping-address.html</div>
+                </label>
+                <label>
+                    <b>Additional Query Parameters (Delimit by ;)</b>
+                    <input type="text" id="extraQueryParams" />
+                    <div class="help-text">Example: param1=value1;param2=value2</div>
+                </label>
+
+                <button type="submit" id="submitBtn">Load PciWeb in IFrame</button>
+                <div id="errorMessage" role="alert" hidden></div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Iframe to load URL -->
+    <iframe id="contentIframe" src="" allow="payment"></iframe>
+
+    <script>
+        // Get references
+        const overlay = document.getElementById('popupOverlay');
+        const form = document.getElementById('popupForm');
+        const iframe = document.getElementById('contentIframe');
+        const submitButton = document.getElementById('submitBtn');
+        const errorMessage = document.getElementById('errorMessage');
+        const tokenEndpoint = 'https://uat.mbdirectapi.cardworks.com/Token/ExchangeToken';
+
+        // Show popup on load
+        window.onload = function () {
+            overlay.style.display = 'flex';
+        };
+
+        // Handle form submission
+        form.onsubmit = async function (e) {
+            e.preventDefault();
+
+            const showLogo = document.getElementById('showLogo').checked;
+            const merchantId = document.querySelector('input[name="merchantId"]:checked').value;
+
+            errorMessage.hidden = true;
+            submitButton.disabled = true;
+            submitButton.textContent = 'Requesting session token...';
+
+            let token;
+            let authHeader = merchantId == "887000003353" ?  "TUVSQ0gyMTEw" : "TVNHUEFZMjI=";
+            try {
+                const response = await fetch(tokenEndpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Basic ' + authHeader
+                    },
+                    body: JSON.stringify({ MerchantId: merchantId })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Token request failed (${response.status})`);
+                }
+
+                const tokenResponse = await response.json();
+                token = tokenResponse.urlToken;
+                if (!token) {
+                    throw new Error('The token API did not return a urlToken.');
+                }
+            } catch (error) {
+                errorMessage.textContent = error.message || 'Unable to request a session token.';
+                errorMessage.hidden = false;
+                submitButton.disabled = false;
+                submitButton.textContent = 'Load PciWeb in IFrame';
+                return;
+            }
+
+            let envUrl = 'https://uat.mbdirectweb.cardworks.com';
+            const baseUrl = `${envUrl}/AutoSubmit`;
+            let url = '';
+            try{
+                url = new URL(baseUrl);
+            } catch (error) {
+                alert('Invalid Environment URL. Be sure to include http:// or https://');
+                return;
+            }
+
+            url.searchParams.set('urlToken', token);
+            showLogo ? {} : url.searchParams.set('br', 'no');
+            url.searchParams.set('MerchantReferenceAccountId', generate20DigitMerchantReferenceAccountId());
+
+            // Parse additional query parameters
+            const extraParams = document.getElementById('extraQueryParams').value.trim();
+            if (extraParams) {
+                const pairs = extraParams.split(';');
+                pairs.forEach(pair => {
+                    const [key, value] = pair.split('=');
+                    if (key && value) {
+                        url.searchParams.set(key.trim(), value.trim());
+                    }
+                });
+            }
+
+            // Set iframe src
+            iframe.src = url.toString();
+            reload_iframe_utils_js(`${envUrl}/js/merchant-iframe-utils.js`);
+
+            // Hide popup
+            overlay.style.display = 'none';
+            submitButton.disabled = false;
+            submitButton.textContent = 'Load PciWeb in IFrame';
+        };
+
+        // Define a custom callback function
+        function customSuccessCallback(url) {
+            // For example, redirect to a different page or update the UI (hide iframe and show message to user)
+            //window.location.href = "shipping-address.html";
+
+            if(url !== null && url !== '') {
+                window.location.href = url;
+            }
+            else {
+                window.location.reload();
+            }
+
+        }
+
+        function reload_iframe_utils_js(src) {
+            const script = document.createElement('script');
+            const cbUrl = document.getElementById('callbackUrl').value.trim();
+            script.src = src;
+            script.onload = function () {
+                if(typeof initIframeMessageHandler === 'function') {
+                    initIframeMessageHandler(customSuccessCallback.bind(null, cbUrl));
+                } else {
+                    console.error('initIframeMessageHandler function not found in the loaded script.');
+                }
+            }
+            script.onerror = function() {
+                console.error('Failed to load the merchant-iframe-utils.js script from ' + src);
+            }
+
+            document.head.appendChild(script);
+        }
+
+        const removeTrailingSlash = (str) => {
+            return str.replace(/\/+$/, '');
+        };
+
+        function generate20DigitMerchantReferenceAccountId() {
+            const part1 = Math.floor(Math.random() * 90000) + 10000; // 5 digits
+            const part2 = Math.floor(Math.random() * 90000) + 10000; // 5 digits
+            const part3 = Math.floor(Math.random() * 90000) + 10000; // 5 digits
+            const part4 = Math.floor(Math.random() * 90000) + 10000; // 5 digits
+  
+            return `${part1}${part2}${part3}${part4}`;
+        };
+        
+    </script>    
+</body>
+</html>
